@@ -1,0 +1,115 @@
+##############################################################
+# Plot the nearfield and farfield.
+# Copyright 2022 Ansys Inc.
+##############################################################
+
+load("full_lens.fsp");
+if (havedata("field")==false){
+    run;
+}
+
+MDPRmeasurements = 1;
+Imageson = 0;
+############################
+# Part 1: phase of nearfield
+############################
+R = getnamed("metalens", "lens radius");
+fl = getnamed("metalens", "focal length Ep"); # change for Ep or Es simulation
+E = getresult("field", "E");
+x = E.x;
+y = E.y;
+ind = find(x ,[-R, R]); # limit the x range for plot
+ind = ind(1):ind(2);
+x = x(ind);
+phase = angle(pinch(E.Ex)); #change to Ex for Ep and Ey for Es
+phase_x = pinch(phase, 2, find(y, 0));
+phase_x = phase_x(ind);
+phase_x = phase_x-min(phase_x);
+phase_target = 2*pi / E.lambda*(fl-sqrt(x^2 + fl^2)); # Hyperbolic lens is assumed
+phase_target = phase_target - min(phase_target);
+
+if(Imageson == 1){
+    plot(x*1e6, mod(unwrap(phase_x), 2*pi), phase_target,"x (um)","Phase (rad)","","linewidth=2");
+    setplot("x max", R*1e6); setplot("x min", -R*1e6);
+    legend("Simulation","Target");
+}
+##################
+# Part 2: farfield
+##################
+
+# downsample the near field to speed up far field projections
+# this is appropriate for metalens applications where there is no evanescent near field
+farfieldsettings("override near field mesh",true);
+farfieldsettings("near field samples per wavelength",2); # at Nyquist limit
+
+# choose area to plot and spatial resolution
+xspace = 24e-6;
+yspace = 24e-6;
+zspace = 150e-6;
+height = 1e-6;
+
+
+xf = linspace((-xspace/2),(xspace/2),61);
+yf = linspace((-yspace/2),(yspace/2),61);
+zf = linspace(height+5e-7,(zspace+height+5e-7),21);
+
+# farfield along z axis
+E2_z = farfieldexact3d('field', 0, 0, zf);
+E2_z = pinch(sum(abs(E2_z)^2,4));
+
+if(Imageson == 1){
+    plot(zf*1e6, E2_z,'z (um)','|E|^2 (V^2/m^2)','Farfield along z-axis','linewidth=2');
+    legend("");
+}
+
+#find focal plane
+ind = find(E2_z, max(E2_z));
+zm = zf(ind);
+
+# farfield in x diirection at the focal point (x=0,y=0,z=zm)
+E2_x = farfieldexact3d('field',xf, 0, zm);
+E2_x = pinch(sum(abs(E2_x)^2,4));
+
+E2_y = farfieldexact3d('field', 0, yf, zm);
+E2_y = pinch(sum(abs(E2_y)^2,4));
+
+if(Imageson == 1){
+    plot(xf*1e6, E2_x,'x (um)','|E|^2 (V^2/m^2)','Farfield at focal plane','linewidth=2');
+    holdon;
+    plot(yf*1e6, E2_y,'y (um)','|E|^2 (V^2/m^2)','Farfield at focal plane','linewidth=2');
+    legend("X-direction","Y-direction");
+    holdoff;
+}
+
+# plot E field intensity profile as a function of xz and xy (focal) planes
+E2_xz = farfieldexact3d('field', xf, 0, zf);
+E2_xz = pinch(sum(abs(E2_xz)^2,4));
+if(Imageson == 1){
+    image(xf*1e6, zf*1e6, E2_xz,'x (um)','z (um)','|E|^2 (x-z plane)');
+}
+
+E2_xy = farfieldexact3d('field',xf, yf, zm);
+E2_xy = pinch(sum(abs(E2_xy)^2,4));
+if(Imageson == 1){
+    image(xf*1e6, yf*1e6, E2_xy,'x (um)','y (um)','|E|^2 (x-y plane)');
+}
+#images of Exy for different za
+if(MDPRmeasurements == 1){
+    E2_epMDPR = farfieldexact3d('field',xf, yf, zf);
+    E2_epMDPR = pinch(sum(abs(E2_epMDPR)^2,4));
+}
+
+## Save farfield intensity to mat file
+if(MDPRmeasurements == 1){
+    matlabsave("IMS_nx61_a0.4um_d_7.5um_zt_150um_Fs30um_Fp35um_r11um_l800nm_.mat", E2_epMDPR, xspace, yspace, zspace, xf, yf, zf);
+    print("MDPR done");
+}
+
+
+
+
+
+
+
+
+

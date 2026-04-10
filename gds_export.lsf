@@ -1,0 +1,75 @@
+clear;
+
+# create vertices vs. phase for unit cells
+##########################################
+?setnamed("::model");
+matlabload("metalens_phase_and_fields_lut_v7.mat"); # load nearfiield/phase vs span library
+
+load("unit_cell.fsp");
+N = length(all_xspan);
+V = cell(N);
+
+for (i=1:N){
+    setnamed("::model","xspan",all_xspan(i));
+    setnamed("::model","yspan",all_yspan(i));
+    runsetup;
+    Result = polystencil({"material": "TiO2", "partialname":"rectangle","z":height/2});
+    V{i} = Result{1}{1}{1};
+}
+
+#matlabsave("vertices_vs_phase", V, phase);
+
+# Make GDS with vertacis and phase map
+
+RL = 100e-6; # lens radius
+f_es = 1300e-6; # focal distance Es
+f_ep = 1500e-6; # focal distance Ep
+np = floor(RL / period); # number of unit cells used in x and y axes to construct the lens
+x_mask = period*(-np:1:np);
+y_mask = period*(-np:1:np);
+X_mask = meshgridx(x_mask,y_mask);
+Y_mask = meshgridy(x_mask,y_mask);
+
+R_mask = (sqrt(X_mask^2 + Y_mask^2) <= RL);
+
+phase_target_es = -mod((2*pi/wavelength)*(sqrt(X_mask^2+Y_mask^2+f_es^2)-f_es), 2*pi); # Hyperbolic lens is assumed with mod 2pi phase target
+phase_target_es = phase_target_es  - min(phase_target_es);
+phase_target_ep = -mod((2*pi/wavelength)*(sqrt(X_mask^2+Y_mask^2+f_ep^2)-f_ep), 2*pi); # Hyperbolic lens is assumed with mod 2pi phase target
+phase_target_ep = phase_target_ep  - min(phase_target_ep);
+
+index_map = zeros(size(x_mask,1),size(y_mask,1));
+
+for(j = 1:2*np+1){
+    for(i = 1:2*np+1){
+        if (R_mask(i,j)!=0) {
+                    phase_error_ep = abs(all_phase_ep - phase_target_ep(i,j));
+                    phase_error_es = abs(all_phase_es - phase_target_es(i,j));
+                    
+                    # Combined error
+                    total_error = phase_error_ep + phase_error_es;
+                    
+                    # Find best pillar
+                    phase_error = min(total_error);
+                    best_index = find(total_error == phase_error,1);
+                    index_map(i,j) = best_index;
+        }
+    }
+}
+
+# Adding marker
+nm = 21; # size of marker in pillars
+tm = 3; # thickness of marker in pillars
+for(j = -(tm-1)/2:1:(tm-1)/2){   
+    for(i = 1:nm){
+        index_map(2*np - ((nm - 1)/2) + j, 2*np - nm + i) = 2601;
+        index_map(2*np - nm + i, 2*np - ((nm - 1)/2) + j) = 2601;
+    }
+}
+
+# Add to gds
+f = gdsopen('GDS_export_with_marker.gds');
+cellname = 'rectangle';
+layer = 1;
+gdsaddmultipoly(f, cellname, layer, V, x_mask, y_mask, index_map);
+
+gdsclose(f);

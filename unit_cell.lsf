@@ -1,0 +1,92 @@
+#############################################################################################
+# Calculate the phase, transmission, and electric field for the metalens unit cell with RCWA
+# Copyright 2023 Ansys Inc.
+##############################################################################################
+
+clear;
+Imageon = 1;
+# Run Sweep
+#runsweep("spansweep"); # Uncomment to run sweep
+
+grating_characterization = getsweepresult("spansweep","grating_characterization");
+total_energy = getsweepresult("spansweep","total_energy");
+xspan = grating_characterization.xspan;
+yspan = grating_characterization.yspan;
+height = 1e-6;
+ni = find(grating_characterization.n, 0); # n index of 0th order
+mi = find(grating_characterization.m, 0); # m index of 0th order
+
+# Get transmission and phase
+S_ss = pinch(grating_characterization.Tss(1,1,ni,mi,:,:));
+S_pp = pinch(grating_characterization.Tpp(1,1,ni,mi,:,:));
+
+T_ss = abs(S_ss)^2;
+T_pp = abs(S_pp)^2;
+
+phase_ss = angle(S_ss);
+phase_pp = angle(S_pp);
+
+phase_ss_x = phase_ss(:,1);
+phase_ss_x = pinch(phase_ss_x);
+
+phase_pp_x = phase_pp(:,1);
+phase_pp_x = pinch(phase_pp_x);
+
+phase_diff = phase_pp(2,2)-phase_pp(1,1);
+
+#plot phase of Ep and Es
+if(Imageon == 1){
+    plot(xspan*1e6,phase_ss_x,"X span (um)"," Phase Es","Height = 1.3 um","linewidth=2");
+    holdon;
+    plot(xspan*1e6,phase_pp_x,"X span (um)"," Phase Ep","Height = 1.3 um","linewidth=2");
+    legend("Phase of Es", "Phase of Ep");
+    holdoff;
+    
+    
+    ## Transmission in terms of X span and Y span for Es
+    image(xspan*1e6,yspan*1e6,T_ss,"X span (um)","Y span (um)","Transmission Es");
+    
+    ## Phase in terms of X span and Y span for Es
+    image(xspan*1e6,yspan*1e6,phase_ss,"X span (um)","Y span (um)","Phase Es");
+    
+    ## Transmission in terms of X span and Y span for Ep
+    image(xspan*1e6,yspan*1e6,T_pp,"X span (um)","Y span (um)","Transmission Es");
+    
+    ## Phase in terms of X span and Y span for Ep
+    image(xspan*1e6,yspan*1e6,phase_pp,"X span (um)","Y span (um)","Phase Ep");
+}
+#############################################################
+# calculate phase and fields for height = 1.7 um and save data
+#############################################################
+
+E_ss = getsweepresult("spansweep","Es");
+E_pp = getsweepresult("spansweep","Ep");
+H_ss = getsweepresult("spansweep","Hs");
+H_pp = getsweepresult("spansweep","Hp");
+
+Esx = pinch(E_ss.Ex);
+Esy = pinch(E_ss.Ey);
+Esz = pinch(E_ss.Ez);
+
+Epx = pinch(E_pp.Ex);
+Epy = pinch(E_pp.Ey);
+Epz = pinch(E_pp.Ez);
+
+Hsx = pinch(H_ss.Hx);
+Hsy = pinch(H_ss.Hy);
+Hsz = pinch(H_ss.Hz);
+
+Hpx = pinch(H_pp.Hx);
+Hpy = pinch(H_pp.Hy);
+Hpz = pinch(H_pp.Hz);
+    
+# Export EH and phase to .mat file for lens analysis
+period = getnamed("RCWA", "x span");
+mat_pillar = getnamed("rectangle","material");
+index_pillar = getfdtdindex("TiO2",E_pp.f,min(E_pp.f),max(E_pp.f));
+mat_sub = getnamed("substrate","material");
+index_sub = getfdtdindex("SiO2 (Glass) - Palik",E_pp.f,min(E_pp.f),max(E_pp.f));
+wavelength = E_pp.lambda;
+
+matlabsave("EH_and_phase_vs_xyspan",wavelength,height,period,mat_pillar,index_pillar,mat_sub,index_sub,phase_ss,phase_pp,xspan,yspan,E_ss,E_pp,H_ss,H_pp,Esx,Esy,Esz,Epx,Epy,Epz,Hsx,Hsy,Hsz,Hpx,Hpy,Hpz);
+

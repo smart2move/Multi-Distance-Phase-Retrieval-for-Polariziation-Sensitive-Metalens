@@ -1,0 +1,285 @@
+##############################################
+#Part 1: construct nearfield datasets for lens
+##############################################
+
+clear;
+
+matlabload("metalens_phase_and_fields_lut_v7.mat"); # load nearfiield/phase vs radius library
+
+background_index = 1;
+nx = ny = 501; # number of points used for farfield projection
+nz = 11; # number of points in z-direction
+
+IMAGEON = 0; # do you want plots?
+farfieldp = 1; # do you want farfield projections?
+MDPR = 1; # do you want MDPR measurements
+
+xspace = 200e-6; # farfield simulation size in x-direction
+yspace = 200e-6; # farfield simulation size in y-direction
+zspace = 135e-6; # farfield simulation size in z-direction
+
+# define the traget phase on a rectinlear grid (x_mask,y_mask) from analytical form
+RL = 100e-6;  # lens radius
+FL_es = 130e-6; # focal distance Es
+FL_ep = 130e-6; # focal distance Ep
+np = floor(RL/period); # number of unit cells used in x and y axes to construct the lens
+x_mask = period*(-np:1:np);
+y_mask = period*(-np:1:np);
+X_mask = meshgridx(x_mask,y_mask);
+Y_mask = meshgridy(x_mask,y_mask);
+phase_target_es = -mod((2*pi/wavelength)*(sqrt(X_mask^2+Y_mask^2+FL_es^2)-FL_es), 2*pi); # Hyperbolic lens is assumed with mod 2pi phase target
+phase_target_es = phase_target_es  - min(phase_target_es);
+phase_target_ep = -mod((2*pi/wavelength)*(sqrt(X_mask^2+Y_mask^2+FL_ep^2)-FL_ep), 2*pi); # Hyperbolic lens is assumed with mod 2pi phase target
+phase_target_ep = phase_target_ep  - min(phase_target_ep);
+
+
+if(IMAGEON == 1){
+    image(x_mask*1e6,y_mask*1e6,phase_target_es,"x (um)","y (um)","Target phase Es (rad)");
+    image(x_mask*1e6,y_mask*1e6,phase_target_ep,"x (um)","y (um)","Target phase Ep (rad)");
+}
+
+ns = size(X_LESS, 2);# number of points for each unit cell
+np = floor(length(x_mask)/2);
+Nx = (2*np+1)*(ns-1)+1; # number of total grid points for lens
+Ny = (2*np+1)*(ns-1)+1; # number of total grid points for lens
+x = linspace(min(x_mask)-period/2,max(x_mask)+period/2,Nx);
+y = linspace(min(y_mask)-period/2,max(y_mask)+period/2,Ny);
+
+
+E_es_near_lens = E_ep_near_lens = matrix(Nx,Ny,3);
+H_es_near_lens = H_ep_near_lens = matrix(Nx,Ny,3);
+E_es_temp = E_ep_temp = H_es_temp = H_ep_temp = matrix(ns,ns,3);
+
+R_mask = (sqrt(X_mask^2 + Y_mask^2) <= RL);
+#######################
+# sum over pillars
+# weight the contribution at unit cell edges and corners to average
+# the contributions from touching unit cells
+wx = wy = ones(ns);
+Wx = meshgrid3dx(wx,wy,1:3);
+Wy = meshgrid3dy(wx,wy,1:3);
+lwx = uwx = 0.5*ones(2*np+1); # treat lowermost and uppermost cells differently
+lwx(1) = 1;
+uwx(end) = 1;
+lwy = lwx;
+uwy = uwx;
+for (j=1:2*np+1) {
+    Wy(:,1,:) = lwy(j);
+    Wy(:,end,:) = uwy(j);
+    for(i=1:2*np+1) {
+        Wx(1,:,:) = lwx(i);
+        Wx(end,:,:) = uwx(i);
+        
+        if (R_mask(i,j)!=0) {
+            phase_error_ep = abs(all_phase_ep - phase_target_ep(i,j));
+            phase_error_es = abs(all_phase_es - phase_target_es(i,j));
+            
+            # Combined error
+            total_error = phase_error_ep + phase_error_es;
+            
+            # Find best pillar
+            phase_error = min(total_error);
+            best_idx = find(total_error == phase_error,1);
+            
+            # Return dimensions
+            px = (i-1)*(ns-1)+1:(i-1)*(ns-1)+ns;
+            py = (j-1)*(ns-1)+1:(j-1)*(ns-1)+ns;
+            
+            E_es_temp(:,:,1) = all_Esx(:,:,best_idx);
+            E_es_temp(:,:,2) = all_Esy(:,:,best_idx);
+            E_es_temp(:,:,3) = all_Esz(:,:,best_idx);
+            
+            E_ep_temp(:,:,1) = all_Epx(:,:,best_idx);
+            E_ep_temp(:,:,2) = all_Epy(:,:,best_idx);
+            E_ep_temp(:,:,3) = all_Epz(:,:,best_idx);
+            
+            H_es_temp(:,:,1) = all_Hsx(:,:,best_idx);
+            H_es_temp(:,:,2) = all_Hsy(:,:,best_idx);
+            H_es_temp(:,:,3) = all_Hsz(:,:,best_idx);
+            
+            H_ep_temp(:,:,1) = all_Hpx(:,:,best_idx);
+            H_ep_temp(:,:,2) = all_Hpy(:,:,best_idx);
+            H_ep_temp(:,:,3) = all_Hpz(:,:,best_idx);
+            
+            E_es_near_lens(px,py,:) = E_es_near_lens(px,py,:) + Wx*Wy*pinch(E_es_temp(:,:,:));
+            E_ep_near_lens(px,py,:) = E_ep_near_lens(px,py,:) + Wx*Wy*pinch(E_ep_temp(:,:,:));
+            H_es_near_lens(px,py,:) = H_es_near_lens(px,py,:) + Wx*Wy*pinch(H_es_temp(:,:,:));
+            H_ep_near_lens(px,py,:) = H_ep_near_lens(px,py,:) + Wx*Wy*pinch(H_ep_temp(:,:,:));
+        }
+    }
+}
+
+# create a dataset of the stiched nearfield
+EH_es_lens = rectilineardataset("EH_es_lens",x,y,z);
+EH_ep_lens = rectilineardataset("EH_ep_lens",x,y,z);
+EH_es_lens.addparameter("f",c/wavelength,"lambda",wavelength);
+EH_ep_lens.addparameter("f",c/wavelength,"lambda",wavelength);
+EH_es_lens.addattribute("E",E_es_near_lens);
+EH_ep_lens.addattribute("E",E_ep_near_lens);
+EH_es_lens.addattribute("H",H_es_near_lens);
+EH_ep_lens.addattribute("H",H_ep_near_lens);
+
+# visualize results
+if(IMAGEON == 1){
+    visualize(EH_es_lens); 
+    visualize(EH_ep_lens);
+}
+
+
+
+
+# phase nearfiled stiching
+###############################################
+Eslens = pinch(EH_es_lens.Ey);
+Eplens = pinch(EH_ep_lens.Ex);
+x2 = EH_es_lens.x;
+y2 = EH_es_lens.y;
+phase2_esf = angle(Eslens);
+phase2_epf= angle(Eplens);
+phase2_es = unwrap(pinch(phase2_esf,2,find(y2,0)));
+phase2_ep = unwrap(pinch(phase2_epf,2,find(y2,0)));
+phase2_es = phase2_es-min(phase2_es);
+phase2_ep = phase2_ep-min(phase2_ep);
+
+phase_target_esx = pinch(phase_target_es,2,np);
+phase_target_epx = pinch(phase_target_ep,2,np);
+
+phase2_es = phase2_es + 2*pi - (phase2_es(length(x2)/2) + 0.1);
+phase2_ep = phase2_ep + 2*pi - (phase2_ep(length(x2)/2) + 0.1);
+phase_target_esx = phase_target_esx + 2*pi - (phase_target_esx(length(phase_target_esx)/2) + 0.1);
+phase_target_epx = phase_target_epx + 2*pi - (phase_target_epx(length(phase_target_epx)/2) + 0.1);
+
+phase2_es = mod(unwrap(phase2_es),2*pi);
+phase2_ep = mod(unwrap(phase2_ep),2*pi);
+phase_target_esx = mod(unwrap(phase_target_esx),2*pi);
+phase_target_epx = mod(unwrap(phase_target_epx),2*pi);
+
+x3 = linspace(min(x2), max(x2), length(phase_target_esx));
+
+if(IMAGEON == 1){
+    plotxy(x2*1e6, phase2_es,"x (um)","phase (rads)","Phase Es","linewidth=2");
+    holdon;
+    plotxy(x3*1e6, phase_target_epx,"x (um)","phase (rads)","Target phase Es","linewidth=2");
+    holdoff;
+    legend("Phase Es","Target phase Es");
+    plotxy(x2*1e6, phase2_ep,"x (um)","phase (rads)","Phase Ep","linewidth=2");
+    holdon;
+    plotxy(x3*1e6, phase_target_esx,"x (um)","phase (rads)","Target phase Ep","linewidth=2");
+    holdoff;
+    image(x2*1e6, y2*1e6, phase2_esf,'x (um)','y (um)','Phase Ep');
+    image(x2*1e6, y2*1e6, phase2_epf,'x (um)','y (um)','Phase Ep');
+}
+
+# Amplitude nearfiled stiching
+###############################################
+Ex2_es = abs(pinch(EH_es_lens.Ey));
+Ex2_ep = abs(pinch(EH_ep_lens.Ex));
+
+if(IMAGEON == 1){
+    plotxy(x2*1e6,pinch(Ex2_es,2,find(y2,0)),"x (um)","|Ex|(V/m)","","linewidth=2, color=red");
+    holdon;
+    plotxy(x2*1e6,pinch(Ex2_ep,2,find(y2,0)),"x (um)","|Ex|(V/m)","","linewidth=2, color=red");
+    legend("Stitched Es", "Stitched Ep");
+    holdoff;
+}
+
+#############################################
+# Part 2: Farfield projection
+#############################################
+if(farfieldp == 1){
+
+    farfieldsettings("override near field mesh",true);
+    farfieldsettings("near field samples per wavelength",2); # at Nyquist limit
+    
+    E2_es_far_lens2 = farfield3d(EH_es_lens,1,nx,ny); # farfield projection from stiched field dataset
+    E2_ep_far_lens2 = farfield3d(EH_ep_lens,1,nx,ny);
+    ux2 = farfieldux(EH_es_lens,1,nx,ny);
+    uy2 = farfielduy(EH_es_lens,1,nx,ny);
+    
+    zf = linspace(2e-6,zspace + 2e-6, nz);
+    xf = linspace(-(xspace/2), (xspace/2), nx);
+    yf = linspace(-(yspace/2), (yspace/2), ny);
+    
+    if(IMAGEON == 1){
+        polarimage(ux2,uy2,E2_es_far_lens2,"Es farfield from stitched nearfield");
+        polarimage(ux2,uy2,E2_ep_far_lens2,"Ep farfield from stitched nearfield");
+
+        # farfield along z axis
+        E_es = farfieldexact3d(EH_es_lens,0,0,zf);
+        E2_es = pinch(sum(abs(E_es)^2,4));
+        E_ep = farfieldexact3d(EH_ep_lens,0,0,zf);
+        E2_ep = pinch(sum(abs(E_ep)^2,4));
+    
+        plot(zf*1e6,E2_es,'z (um)','|E|^2 (V^2/m^2)','Es farfield along propagation axis','linewidth=2');
+        legend("");
+        plot(zf*1e6,E2_ep,'z (um)','|E|^2 (V^2/m^2)','Ep farfield along propagation axis','linewidth=2');
+        legend("");
+    
+        #find focal plane
+        iz_es = find(E2_es,max(E2_es));
+        zm_es = zf(iz_es);
+        iz_ep = find(E2_ep,max(E2_ep));
+        zm_ep = zf(iz_ep);
+        
+        # farfield in x diirection at the focal point (y=0,z=zm) 
+        E_es = farfieldexact3d(EH_es_lens,xf,0,zm_es);
+        E2_es = pinch(sum(abs(E_es)^2,4));
+        E_ep = farfieldexact3d(EH_ep_lens,xf,0,zm_ep);
+        E2_ep = pinch(sum(abs(E_ep)^2,4));
+        
+        plot(xf*1e6,E2_es,'x (um)','|E|^2 (V^2/m^2)','Es farfield at focal plane','linewidth=2');
+        legend("");
+        plot(xf*1e6,E2_ep,'x (um)','|E|^2 (V^2/m^2)','Ep farfield at focal plane','linewidth=2');
+        legend("");
+    
+        # farfield in y diirection at the focal point (x=0,y=0,z=zm)
+        E_es = farfieldexact3d(EH_es_lens,0,yf,zm_es);
+        E2_es = pinch(sum(abs(E_es)^2,4));
+        E_ep = farfieldexact3d(EH_ep_lens,0,yf,zm_ep);
+        E2_ep = pinch(sum(abs(E_ep)^2,4));
+            
+        plot(yf*1e6,E2_es,'y (um)','|E|^2 (V^2/m^2)','Es farfield at focal plane','linewidth=2');
+        legend("");
+        plot(yf*1e6,E2_ep,'y (um)','|E|^2 (V^2/m^2)','Ep farfield at focal plane','linewidth=2');
+        legend("");
+    
+    
+        # farfield in xz plane
+        E_es = farfieldexact3d(EH_es_lens,xf,0,zf);
+        E2_es = pinch(sum(abs(E_es)^2,4));
+        E_ep = farfieldexact3d(EH_ep_lens,xf,0,zf);
+        E2_ep = pinch(sum(abs(E_ep)^2,4));
+    
+        image(xf*1e6,zf*1e6,E2_es,'x (um)','z (um)','|Es|^2 (x-z plane)');
+        image(xf*1e6,zf*1e6,E2_ep,'x (um)','z (um)','|Ep|^2 (x-z plane)');
+    
+        # farfield in xy focal plane
+        E_es = farfieldexact3d(EH_es_lens,xf,yf,zm_es);
+        E2_es = pinch(sum(abs(E_es)^2,4));
+        E_ep = farfieldexact3d(EH_ep_lens,xf,yf,zm_ep);
+        E2_ep = pinch(sum(abs(E_ep)^2,4));
+    
+        image(xf*1e6,yf*1e6,E2_es,'x (um)','y (um)','|Es|^2 (x-y plane)');
+        image(xf*1e6,yf*1e6,E2_ep,'x (um)','y (um)','|Ep|^2 (x-y plane)');
+    }
+
+    # farfield in xy for MDPR
+    if(MDPR == 1){
+        E_esMDPR = farfieldexact3d(EH_es_lens, xf, yf, zf);
+        E2_esMDPR = pinch(sum(abs(E_esMDPR)^2, 4));
+        #E_epMDPR = farfieldexact3d(EH_ep_lens, xf, yf, zf);
+        E2_epMDPR = 0; #pinch(sum(abs(E_epMDPR)^2, 4));
+        
+        Esample_esMDPR = farfieldexact3d(EH_es_lens, xf, yf, 2e-6);
+        Esample_esMDPR = pinch(Esample_esMDPR);
+        Phase_esMDPR = angle(pinch(Esample_esMDPR, 3, 2));
+        
+        #Esample_epMDPR = farfieldexact3d(EH_ep_lens, xf, yf, 2e-6);
+        #Esample_epMDPR = pinch(Esample_epMDPR);
+        Phase_epMDPR = 0;#angle(pinch(Esample_epMDPR, 3, 1));
+        
+        matlabsave("IMS_high_NA_nx501_a0.4um_Fs130um_Fp130um_r100um_l800nm_.mat", E2_esMDPR, E2_epMDPR, Phase_esMDPR, Phase_epMDPR, xspace, yspace, zspace, xf, yf, zf);
+        print("MDPR done");
+    }
+        
+}
